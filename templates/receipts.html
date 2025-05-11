@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>アップロード済レシート</title>
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+    <meta name="theme-color" content="#ffffff">
+    <link rel="icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+.no-image-box {
+  width: 100%;
+  height: 240px;
+  background-color: #f0f0f0;
+  border: 2px dashed #ccc;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 1.2rem;
+  color: #999;
+}
+/* ホバー時 */
+.table-hover tbody tr:hover {
+  background-color: #f2f2f2;
+  cursor: pointer;
+}
+
+/* クリックで選択された行 */
+tr.selected-row {
+  background-color: #d0ebff !important;
+}
+    </style>
+  </head>
+  <body class="container py-4">
+    <h1 class="mb-4">アップロード済レシート一覧</h1>
+
+    <div class="d-flex flex-column flex-sm-row gap-2 mb-3">
+      <a href="/" class="btn btn-secondary">戻る</a>
+      <button class="btn btn-success" id="confirm-export-btn">GnuCash用CSV出力</button>
+      <button class="btn btn-outline-primary" id="toggle-view-btn">取り込み済み一覧</button>
+    </div>
+
+    <div class="table-responsive">
+      <p id="current-view-label" class="mb-2 fw-bold text-primary">🟡 未取り込みのレシート一覧</p>
+      <table class="table table-hover table-bordered table-sm align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>ID</th>
+            <th>日時</th>
+            <th>店名</th>
+            <th>金額</th>
+          </tr>
+        </thead>
+        <tbody id="receipt-list">
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Toast -->
+    <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 11">
+      <div id="toast" class="toast text-bg-warning border-0" role="alert">
+        <div class="d-flex">
+          <div class="toast-body" id="toast-body">メッセージ</div>
+          <button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal -->
+    <div class="modal fade" id="exportModal" tabindex="-1" aria-labelledby="exportModalLabel" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="exportModalLabel">CSV出力の確認</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="閉じる"></button>
+          </div>
+          <div class="modal-body">
+            未出力のレシートをCSV形式でダウンロードします。よろしいですか？
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">キャンセル</button>
+            <button type="button" class="btn btn-success" id="do-export-btn">出力する</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 詳細モーダル -->
+    <div class="modal fade" id="detailModal" tabindex="-1" aria-labelledby="detailModalLabel" aria-hidden="true">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <form id="edit-form">
+            <div class="modal-header">
+              <h5 class="modal-title" id="detailModalLabel">レシート詳細</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body row g-3">
+              <input type="hidden" id="detail-id">
+              <div class="col-md-6 text-center" id="image-container">
+                <img id="detail-image" src="" alt="レシート画像" class="img-fluid d-none">
+                <div id="no-image-text" class="no-image-box text-muted">NO IMAGE</div>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">日付</label>
+                <input type="date" class="form-control mb-2" id="detail-date" required>
+                <label class="form-label">時間</label>
+                <input type="time" class="form-control mb-2" id="detail-time" required>
+                <label class="form-label">店名</label>
+                <input type="text" class="form-control mb-2" id="detail-store" list="store-name-list">
+                <datalist id="payment-method-list"></datalist>
+                <label class="form-label">金額</label>
+                <input type="number" class="form-control mb-2" id="detail-amount">
+                <label class="form-label">支払方法</label>
+                <input type="text" class="form-control" id="detail-method" list="payment-method-list">
+                <datalist id="store-name-list"></datalist>
+              </div>
+            </div>
+            <div class="modal-footer justify-content-between">
+              <button type="button" class="btn btn-danger" id="delete-btn">削除</button>
+              <div>
+                <button type="submit" class="btn btn-primary">保存</button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">閉じる</button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+      let detailModal;
+      let exportModal;
+      document.addEventListener("DOMContentLoaded", () => {
+        exportModal = new bootstrap.Modal(document.getElementById("exportModal"));
+        detailModal = new bootstrap.Modal(document.getElementById("detailModal"));
+      });
+
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/static/service-worker.js')
+          .then(reg => console.log('Service Worker registered:', reg.scope))
+          .catch(err => console.error('SW registration failed:', err));
+      }
+
+      function showToast(message) {
+        const toastEl = document.getElementById("toast");
+        document.getElementById("toast-body").innerText = message;
+        const toast = new bootstrap.Toast(toastEl);
+        toast.show();
+      }
+
+      document.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('confirm-export-btn').addEventListener('click', () => {
+          exportModal.show();
+        });
+
+        document.getElementById('do-export-btn').addEventListener('click', () => {
+          exportModal.hide();
+          fetch('/export_csv').then(res => {
+            if (res.status === 204) {
+              showToast("未出力のレシートはありません。");
+            } else if (res.ok) {
+              res.blob().then(blob => {
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'receipts.csv';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+              });
+            } else {
+              showToast("エクスポートに失敗しました。");
+            }
+          });
+        });
+      });
+
+      document.addEventListener("DOMContentLoaded", () => {
+        fetch("/api/receipts")
+          .then(res => res.json())
+          .then(data => {
+            const tbody = document.getElementById("receipt-list");
+            tbody.innerHTML = "";
+            if (data.length === 0) {
+              tbody.innerHTML = "<tr><td colspan='4'>レシートがありません</td></tr>";
+              return;
+            }
+            data["receipts"].forEach((item, index) => {
+              const row = document.createElement("tr");
+              row.innerHTML = `
+              <td>${item.id}</td>
+              <td>${item.receipt_date} ${item.receipt_time}</td>
+              <td>${item.store_name}</td>
+              <td class="text-end">${item.amount.toLocaleString()}</td>
+            `;
+              tbody.appendChild(row);
+            });
+          })
+          .catch(err => {
+            document.getElementById("receipt-list").innerHTML = "<tr><td colspan='4'>読み込み失敗</td></tr>";
+            console.error(err);
+          });
+      });
+
+      let showingExported = false;
+
+      function loadReceipts() {
+        updateViewLabel();
+        fetch(`/api/receipts?exported=${showingExported}`)
+          .then(res => res.json())
+          .then(data => {
+            const tbody = document.getElementById("receipt-list");
+            tbody.innerHTML = "";
+            if (!data.receipts || data.receipts.length === 0) {
+              tbody.innerHTML = "<tr><td colspan='4'>レシートがありません</td></tr>";
+              return;
+            }
+            data.receipts.forEach((item) => {
+              const row = document.createElement("tr");
+              row.innerHTML = `
+              <td>${item.id}</td>
+              <td>${item.receipt_date} ${item.receipt_time}</td>
+              <td>${item.store_name}</td>
+              <td class="text-end">${item.amount.toLocaleString()}</td>
+            `;
+              row.addEventListener("click", () => {
+                document.querySelectorAll("#receipt-list tr").forEach(r => r.classList.remove("selected-row"));
+                row.classList.add("selected-row");
+                showReceiptModal(item);
+              });
+              tbody.appendChild(row);
+
+              if (highlightId && item.id.toString() === highlightId) {
+                showReceiptModal(item);
+                history.replaceState(null, "", location.pathname);
+              }
+            });
+          })
+          .catch(err => {
+            document.getElementById("receipt-list").innerHTML = "<tr><td colspan='4'>読み込み失敗</td></tr>";
+            console.error(err);
+          });
+      }
+
+      function showReceiptModal(item) {
+        fetch("/api/receipt_choices")
+          .then(res => res.json())
+          .then(data => {
+            const storeList = document.getElementById("store-name-list");
+            const methodList = document.getElementById("payment-method-list");
+            storeList.innerHTML = "";
+            methodList.innerHTML = "";
+
+            data.store_names.forEach(name => {
+              const opt = document.createElement("option");
+              opt.value = name;
+              storeList.appendChild(opt);
+            });
+
+            data.payment_methods.forEach(method => {
+              const opt = document.createElement("option");
+              opt.value = method;
+              methodList.appendChild(opt);
+            });
+          });
+
+        document.getElementById("detail-id").value = item.id;
+        document.getElementById("detail-date").value = item.receipt_date;
+        document.getElementById("detail-time").value = item.receipt_time;
+        document.getElementById("detail-store").value = item.store_name;
+        document.getElementById("detail-amount").value = item.amount;
+        document.getElementById("detail-method").value = item.payment_method || "";
+
+        const image = document.getElementById("detail-image");
+        const noImageText = document.getElementById("no-image-text");
+        if (item.filename) {
+          image.src = `/uploads/${item.filename}`;
+          image.classList.remove("d-none");
+          noImageText.classList.add("d-none");
+        } else {
+          image.src = "";
+          image.classList.add("d-none");
+          noImageText.classList.remove("d-none");
+        }
+
+        detailModal.show();
+      }
+
+      document.addEventListener("DOMContentLoaded", () => {
+        updateViewLabel();
+        loadReceipts();
+
+        document.getElementById('confirm-export-btn').addEventListener('click', () => {
+          exportModal.show();
+        });
+
+        document.getElementById("current-view-label").addEventListener("click", () => {
+            document.getElementById("toggle-view-btn").click();
+        });
+
+        document.getElementById('do-export-btn').addEventListener('click', () => {
+          exportModal.hide();
+          fetch('/export_csv').then(res => {
+            if (res.status === 204) {
+              showToast("未出力のレシートはありません。");
+            } else if (res.ok) {
+              res.blob().then(blob => {
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'receipts.csv';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+                showToast("CSVをダウンロードしました");
+
+                // ✅ 未取り込み一覧をリロードして空に
+                if (!showingExported) loadReceipts();
+              });
+            } else {
+              showToast("エクスポートに失敗しました。");
+            }
+          });
+        });
+
+        document.getElementById("toggle-view-btn").addEventListener("click", () => {
+          showingExported = !showingExported;
+          document.getElementById("toggle-view-btn").innerText = showingExported ? "未取り込み一覧" : "取り込み済み一覧";
+          loadReceipts();
+        });
+      });
+
+      function updateViewLabel() {
+        const label = document.getElementById("current-view-label");
+        const toggleBtn = document.getElementById("toggle-view-btn");
+        if (showingExported) {
+          label.textContent = "🟢 取り込み済みのレシート一覧";
+          toggleBtn.textContent = "← 未取り込みに戻る";
+        } else {
+          label.textContent = "🟡 未取り込みのレシート一覧";
+          toggleBtn.textContent = "取り込み済み一覧を見る";
+        }
+      }
+
+      document.getElementById("edit-form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const id = document.getElementById("detail-id").value;
+
+        fetch(`/api/receipt/${id}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            store_name: document.getElementById("detail-store").value,
+            amount: parseInt(document.getElementById("detail-amount").value, 10),
+            payment_method: document.getElementById("detail-method").value,
+            receipt_date: document.getElementById("detail-date").value,
+            receipt_time: document.getElementById("detail-time").value
+          })
+        })
+          .then(res => {
+            if (res.ok) {
+              showToast("保存しました");
+              location.reload();
+            } else {
+              showToast("保存に失敗しました");
+            }
+          });
+      });
+
+      document.getElementById("delete-btn").addEventListener("click", () => {
+        const id = document.getElementById("detail-id").value;
+        if (!confirm("このレシートを削除します。よろしいですか？")) return;
+        fetch(`/api/receipt/${id}`, { method: "DELETE" }).then(res => {
+          if (res.ok) {
+            showToast("削除しました");
+            location.reload();
+          } else {
+            showToast("削除に失敗しました");
+          }
+        });
+      });
+
+      const urlParams = new URLSearchParams(window.location.search);
+      const highlightId = urlParams.get("highlight_id");
+    </script>
+  </body>
+</html>
+<!--
+  vim:et:st=2:sts=2:sw=2
+-->

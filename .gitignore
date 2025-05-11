@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+*.egg-info/
+.env
+.venv/
+venv/
+
+# SQLite
+*.db
+*.sqlite3
+
+# Flask uploads
+uploads/
+
+# Alembic
+migrations/__pycache__/
+migrations/versions/*.pyc
+
+# VSCode / Editor
+.vscode/
+*.swp
+*.swo
+
+# Docker
+docker-compose.yml
+
+# Mac
+.DS_Store
+
+# Tailscale
+tailscale*/
